@@ -9,8 +9,9 @@ from data.flickr30k_dataset import flickr30k_train, flickr30k_retrieval_eval
 from data.vqa_dataset import vqa_dataset
 from data.nlvr_dataset import nlvr_dataset
 from data.pretrain_dataset import pretrain_dataset
+from data.sherlock import sherlock_dataset
 from transform.randaugment import RandomAugment
-
+import json
 def create_dataset(dataset, config, min_scale=0.5):
     
     normalize = transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
@@ -68,6 +69,20 @@ def create_dataset(dataset, config, min_scale=0.5):
         test_dataset = nlvr_dataset(transform_test, config['image_root'], config['ann_root'],'test')     
         return train_dataset, val_dataset, test_dataset   
     
+    elif dataset=='sherlock':
+        with open(config['train_file']) as f:
+            train = json.load(f)
+            train_dataset = sherlock_dataset(train, config, True)
+        with open(config['val_file']) as f:
+            val = json.load(f)
+            val_dataset = sherlock_dataset(val, config, False)
+        with open(config['test_file']) as f:
+            test = json.load(f)
+            test_dataset = sherlock_dataset(test, config, False)
+        # train_dataset = sherlock_dataset(config['train_file'], config, True)
+        # val_dataset = sherlock_dataset(config['val_file'], config, False)
+        # test_dataset = sherlock_dataset(config['test_file'], config, False)
+        return train_dataset, val_dataset, test_dataset
     
 def create_sampler(datasets, shuffles, num_tasks, global_rank):
     samplers = []

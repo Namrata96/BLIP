@@ -5,9 +5,17 @@
  * For full license text, see LICENSE.txt file in the repo root or https://opensource.org/licenses/BSD-3-Clause
  * By Junnan Li
 '''
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.backends.cudnn as cudnn
+import torch.distributed as dist
+import language_evaluation
+
 import argparse
 import os
-import ruamel_yaml as yaml
+import ruamel.yaml as yaml
 import numpy as np
 import random
 import time
@@ -15,18 +23,15 @@ import datetime
 import json
 from pathlib import Path
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.backends.cudnn as cudnn
-import torch.distributed as dist
+
 from torch.utils.data import DataLoader
 
 from models.blip import blip_decoder
 import utils
 from utils import cosine_lr_schedule
 from data import create_dataset, create_sampler, create_loader
-from data.utils import save_result, coco_caption_eval
+from data.utils import save_result
+# from data.utils import coco_caption_eval
 
 def train(model, data_loader, optimizer, epoch, device):
     # train
@@ -36,8 +41,8 @@ def train(model, data_loader, optimizer, epoch, device):
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     metric_logger.add_meter('loss', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
     header = 'Train Caption Epoch: [{}]'.format(epoch)
-    print_freq = 50
-
+    print_freq = 500
+    print("Length of data loader: ", len(data_loader))
     for i, (image, caption, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         image = image.to(device)       
         
@@ -66,24 +71,35 @@ def evaluate(model, data_loader, device, config):
     print_freq = 10
 
     result = []
-    for image, image_id in metric_logger.log_every(data_loader, print_freq, header): 
+    for image, image_id, clue in metric_logger.log_every(data_loader, print_freq, header): 
         
         image = image.to(device)       
         
         captions = model.generate(image, sample=False, num_beams=config['num_beams'], max_length=config['max_length'], 
                                   min_length=config['min_length'])
         
-        for caption, img_id in zip(captions, image_id):
-            result.append({"image_id": img_id.item(), "caption": caption})
+        for caption, img_id, clue in zip(captions, image_id, clue):
+            result.append({"image_id": img_id, "caption": caption, "clue":clue})
   
     return result
 
+def get_preds_and_ans(result_dict):
+
+    preds = []
+    ans = []
+    for it in result_dict:
+        preds.append(it['caption'])
+        ans.append(it['clue'])
+
+    return preds, ans
+
 
 def main(args, config):
-    utils.init_distributed_mode(args)    
+    if args.distributed:
+        utils.init_distributed_mode(args)    
     
-    device = torch.device(args.device)
-
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print("Device: ", device)
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
     torch.manual_seed(seed)
@@ -93,7 +109,7 @@ def main(args, config):
 
     #### Dataset #### 
     print("Creating captioning dataset")
-    train_dataset, val_dataset, test_dataset = create_dataset('caption_coco', config)  
+    train_dataset, val_dataset, test_dataset = create_dataset(config['dataset'], config)  
 
     if args.distributed:
         num_tasks = utils.get_world_size()
@@ -136,15 +152,20 @@ def main(args, config):
             train_stats = train(model, train_loader, optimizer, epoch, device) 
         
         val_result = evaluate(model_without_ddp, val_loader, device, config)  
-        val_result_file = save_result(val_result, args.result_dir, 'val_epoch%d'%epoch, remove_duplicate='image_id')        
-  
+        # val_result_file = save_result(val_result, args.result_dir, 'val_epoch%d'%epoch, remove_duplicate='image_id')        
+        val_preds, val_ans = get_preds_and_ans(val_result)
         test_result = evaluate(model_without_ddp, test_loader, device, config)  
-        test_result_file = save_result(test_result, args.result_dir, 'test_epoch%d'%epoch, remove_duplicate='image_id')  
+        # test_result_file = save_result(test_result, args.result_dir, 'test_epoch%d'%epoch, remove_duplicate='image_id')  
+        test_preds, test_ans = get_preds_and_ans(test_result)
 
         if utils.is_main_process():   
-            coco_val = coco_caption_eval(config['coco_gt_root'],val_result_file,'val')
-            coco_test = coco_caption_eval(config['coco_gt_root'],test_result_file,'test')
-            
+            # coco_val = coco_caption_eval(config['coco_gt_root'],val_result_file,'val')
+            # coco_test = coco_caption_eval(config['coco_gt_root'],test_result_file,'test')
+            evaluator = language_evaluation.CocoEvaluator(verbose=False)
+
+            coco_val = evaluator.run_evaluation(val_preds, val_ans)
+            coco_test = evaluator.run_evaluation(test_preds, test_ans)
+
             if args.evaluate:            
                 log_stats = {**{f'val_{k}': v for k, v in coco_val.eval.items()},
                              **{f'test_{k}': v for k, v in coco_test.eval.items()},                       
@@ -159,23 +180,29 @@ def main(args, config):
                     'epoch': epoch,
                 }
 
-                if coco_val.eval['CIDEr'] + coco_val.eval['Bleu_4'] > best:
-                    best = coco_val.eval['CIDEr'] + coco_val.eval['Bleu_4']
+                if coco_val['CIDEr'] + coco_val['Bleu_4'] > best:
+                    best = coco_val['CIDEr'] + coco_val['Bleu_4']
                     best_epoch = epoch                
                     torch.save(save_obj, os.path.join(args.output_dir, 'checkpoint_best.pth')) 
                     
                 log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                             **{f'val_{k}': v for k, v in coco_val.eval.items()},
-                             **{f'test_{k}': v for k, v in coco_test.eval.items()},                       
+                             **{f'val_{k}': v for k, v in coco_val.items()},
+                             **{f'test_{k}': v for k, v in coco_test.items()},                       
                              'epoch': epoch,
                              'best_epoch': best_epoch,
                             }
                 with open(os.path.join(args.output_dir, "log.txt"),"a") as f:
-                    f.write(json.dumps(log_stats) + "\n")     
+                    f.write(json.dumps(log_stats) + "\n")
+
+                with open(os.path.join(args.output_dir, "val_preds_and_ans.json"),"w") as f:
+                    f.write(json.dump(val_result)) 
+                with open(os.path.join(args.output_dir, "test_preds_and_ans.json"),"w") as f:
+                    f.write(json.dump(test_result))      
                     
         if args.evaluate: 
             break
-        dist.barrier()     
+        if args.distributed:
+            dist.barrier()     
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -184,8 +211,8 @@ def main(args, config):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default='./configs/caption_coco.yaml')
-    parser.add_argument('--output_dir', default='/scratch/nm3571/multimodal/result/blip/coco')        
+    parser.add_argument('--config', default='/home/nm3571/multimodal/BLIP/configs/caption_sherlock.yaml')
+    parser.add_argument('--output_dir', default='/scratch/nm3571/multimodal/result/blip/sherlock/full/two_epochs')        
     parser.add_argument('--evaluate', action='store_true')    
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--seed', default=42, type=int)

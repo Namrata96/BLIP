@@ -1,0 +1,38 @@
+train_file: '/scratch/nm3571/multimodal/data/sherlock/new_sherlock_train.json'
+val_file: '/scratch/nm3571/multimodal/data/sherlock/new_sherlock_val.json'
+test_file: '/scratch/nm3571/multimodal/data/sherlock/new_sherlock_test.json'
+
+vg_dir: /scratch/nm3571/multimodal/data/sherlock/vg_images_final/
+vcr_dir: /scratch/nm3571/multimodal/data/sherlock/vcr1_final2/
+widescreen_processing: 0 # if 1, then we will run CLIP twice over each image twice to get a bigger field of view, if 2 we will squarepad (less computation), if 0 we center crop (less computation)
+# set pretrained as a file path or an url
+pretrained: '/scratch/nm3571/multimodal/models/blip/model_base_capfilt_large.pth'
+dataset: sherlock
+
+
+# size of vit model; base or large
+vit: 'base'
+vit_grad_ckpt: False
+vit_ckpt_layer: 0
+batch_size: 16
+init_lr: 1e-5
+
+# vit: 'large'
+# vit_grad_ckpt: True
+# vit_ckpt_layer: 5
+# batch_size: 16
+# init_lr: 2e-6
+
+image_size: 384
+
+# generation configs
+max_length: 20  
+min_length: 5
+num_beams: 3
+prompt: 'a picture of '
+
+# optimizer
+weight_decay: 0.05
+min_lr: 0
+max_epoch: 2
+

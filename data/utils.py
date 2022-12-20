@@ -50,6 +50,7 @@ def save_result(result, result_dir, filename, remove_duplicate=''):
     
     json.dump(result,open(result_file,'w'))
 
+
     dist.barrier()
 
     if utils.is_main_process():   
@@ -77,8 +78,8 @@ def save_result(result, result_dir, filename, remove_duplicate=''):
 
 
 
-from pycocotools.coco import COCO
-from pycocoevalcap.eval import COCOEvalCap
+# from pycocotools.coco import COCO
+# from pycocoevalcap.eval import COCOEvalCap
 from torchvision.datasets.utils import download_url
 
 def coco_caption_eval(coco_gt_root, results_file, split):

@@ -14,8 +14,8 @@ class coco_karpathy_train(Dataset):
         image_root (string): Root directory of images (e.g. coco/images/)
         ann_root (string): directory to store the annotation file
         '''        
-        url = 'https://storage.googleapis.com/sfr-vision-language-research/datasets/coco_karpathy_val.json'
-        filename = 'coco_karpathy_val.json'
+        url = 'https://storage.googleapis.com/sfr-vision-language-research/datasets/coco_karpathy_train.json'
+        filename = 'coco_karpathy_train.json'
 
         download_url(url,ann_root)
         
