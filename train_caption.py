@@ -28,12 +28,12 @@ from torch.utils.data import DataLoader
 
 from models.blip import blip_decoder
 import utils
-from utils import cosine_lr_schedule
+from utils import cosine_lr_schedule, warmup_lr_schedule
 from data import create_dataset, create_sampler, create_loader
 from data.utils import save_result
 # from data.utils import coco_caption_eval
 
-def train(model, data_loader, optimizer, epoch, device):
+def train(model, data_loader, optimizer, step, device):
     # train
     model.train()  
     
@@ -68,7 +68,7 @@ def evaluate(model, data_loader, device, config):
     
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Caption generation:'
-    print_freq = 10
+    print_freq = 100
 
     result = []
     for image, image_id, clue in metric_logger.log_every(data_loader, print_freq, header): 
@@ -139,7 +139,7 @@ def main(args, config):
             
     best = 0
     best_epoch = 0
-
+    step = 0
     print("Start training")
     start_time = time.time()    
     for epoch in range(0, config['max_epoch']):
@@ -148,9 +148,10 @@ def main(args, config):
                 train_loader.sampler.set_epoch(epoch)
                 
             cosine_lr_schedule(optimizer, epoch, config['max_epoch'], config['init_lr'], config['min_lr'])
-                
+            # warmup_lr_schedule(optimizer, step, config['max_epoch']*len(train_loader),  config['init_lr'], config['min_lr'])
+            
             train_stats = train(model, train_loader, optimizer, epoch, device) 
-        
+            
         val_result = evaluate(model_without_ddp, val_loader, device, config)  
         # val_result_file = save_result(val_result, args.result_dir, 'val_epoch%d'%epoch, remove_duplicate='image_id')        
         val_preds, val_ans = get_preds_and_ans(val_result)
@@ -195,9 +196,9 @@ def main(args, config):
                     f.write(json.dumps(log_stats) + "\n")
 
                 with open(os.path.join(args.output_dir, "val_preds_and_ans.json"),"w") as f:
-                    f.write(json.dump(val_result)) 
+                    json.dump(val_result, f) 
                 with open(os.path.join(args.output_dir, "test_preds_and_ans.json"),"w") as f:
-                    f.write(json.dump(test_result))      
+                    json.dump(test_result, f)     
                     
         if args.evaluate: 
             break
@@ -212,7 +213,7 @@ def main(args, config):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='/home/nm3571/multimodal/BLIP/configs/caption_sherlock.yaml')
-    parser.add_argument('--output_dir', default='/scratch/nm3571/multimodal/result/blip/sherlock/full/two_epochs')        
+    parser.add_argument('--output_dir', default='/scratch/nm3571/multimodal/result/blip/sherlock/full/five_epochs')        
     parser.add_argument('--evaluate', action='store_true')    
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--seed', default=42, type=int)
